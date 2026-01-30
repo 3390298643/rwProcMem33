@@ -1,0 +1,41 @@
+name: Build R33
+on:
+  workflow_dispatch:
+    inputs:
+      kv:
+        description: 'Kernel (6.1.75 or 6.1.118)'
+        required: true
+        default: '6.1.118'
+        type: choice
+        options:
+          - '6.1.75'
+          - '6.1.118'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        repository: abcz316/rwProcMem33
+    - run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu wget
+        wget -q "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ github.event.inputs.kv }}.tar.xz"
+        tar -xf "linux-${{ github.event.inputs.kv }}.tar.xz"
+        cd "linux-${{ github.event.inputs.kv }}"
+        make ARCH=arm64 defconfig
+        make ARCH=arm64 modules_prepare
+        cd ..
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        for dir in rwProcMem33Module/rwProcMem_module hwBreakpointProcModule/hwBreakpointProc_module; do
+          sed -i "s|KDIR.*|KDIR?=$(pwd)/linux-${{ github.event.inputs.kv }}|" "$dir/Makefile"
+          make -C "$dir" || true
+        done
+        mkdir -p o
+        find . -name "*.ko" -exec cp {} o/ \;
+    - uses: actions/upload-artifact@v3
+      with:
+        name: r33-ko
+        path: o/*.ko
