@@ -1,11 +1,12 @@
-name: Build R33
+name: Build R33 for OnePlus Pad Pro
+
 on:
   workflow_dispatch:
     inputs:
-      kv:
-        description: 'Kernel (6.1.75 or 6.1.118)'
+      kernel_version:
+        description: 'Kernel Version'
         required: true
-        default: '6.1.118'
+        default: '6.1.75'
         type: choice
         options:
           - '6.1.75'
@@ -14,28 +15,78 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout R33
+      uses: actions/checkout@v3
       with:
         repository: abcz316/rwProcMem33
-    - run: |
+        
+    - name: Install Dependencies
+      run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu wget
-        wget -q "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ github.event.inputs.kv }}.tar.xz"
-        tar -xf "linux-${{ github.event.inputs.kv }}.tar.xz"
-        cd "linux-${{ github.event.inputs.kv }}"
+        sudo apt-get install -y wget xz-utils make git bc bison flex libssl-dev
+        
+    - name: Download Android GCC 4.9 Toolchain
+      run: |
+        echo "Downloading Android GCC 4.9 toolchain..."
+        wget -q https://github.com/Adrilaw/aarch64-linux-android-4.9-toolchain/archive/refs/heads/main.tar.gz
+        tar -xf main.tar.gz
+        mv aarch64-linux-android-4.9-toolchain-main android-toolchain
+        ls -la android-toolchain/bin/
+        
+    - name: Clone OnePlus Kernel Source
+      run: |
+        echo "Cloning OnePlus SM8650 kernel..."
+        git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git oneplus-kernel
+        cd oneplus-kernel
+        git branch -a | grep 6.1 || echo "Using default branch"
+        
+    - name: Configure Kernel
+      run: |
+        cd oneplus-kernel
+        make ARCH=arm64 O=out oneplus_defconfig 2>/dev/null || \
+        make ARCH=arm64 O=out defconfig 2>/dev/null || \
         make ARCH=arm64 defconfig
+        make ARCH=arm64 O=out modules_prepare 2>/dev/null || \
         make ARCH=arm64 modules_prepare
-        cd ..
+        
+    - name: Build R33 Modules
+      run: |
+        export PATH=$(pwd)/android-toolchain/bin:$PATH
         export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        for dir in rwProcMem33Module/rwProcMem_module hwBreakpointProcModule/hwBreakpointProc_module; do
-          sed -i "s|KDIR.*|KDIR?=$(pwd)/linux-${{ github.event.inputs.kv }}|" "$dir/Makefile"
-          make -C "$dir" || true
-        done
-        mkdir -p o
-        find . -name "*.ko" -exec cp {} o/ \;
-    - uses: actions/upload-artifact@v4
+        export CROSS_COMPILE=aarch64-linux-android-
+        export KDIR=$(pwd)/oneplus-kernel
+        
+        echo "Building with:"
+        echo "  ARCH=$ARCH"
+        echo "  CROSS_COMPILE=$CROSS_COMPILE"
+        echo "  KDIR=$KDIR"
+        which aarch64-linux-android-gcc
+        
+        echo "Building rwProcMem33..."
+        cd rwProcMem33Module/rwProcMem_module
+        sed -i "s|KDIR.*|KDIR?=$KDIR|" Makefile
+        make clean 2>/dev/null || true
+        make -j$(nproc) 2>&1 | tee build.log || echo "Build attempted"
+        cd ../..
+        
+        echo "Building hwBreakpointProc33..."
+        cd hwBreakpointProcModule/hwBreakpointProc_module
+        sed -i "s|KDIR.*|KDIR?=$KDIR|" Makefile
+        make clean 2>/dev/null || true
+        make -j$(nproc) 2>&1 | tee build.log || echo "Build attempted"
+        cd ../..
+        
+    - name: Collect Output
+      run: |
+        mkdir -p output
+        find . -name "*.ko" -type f -exec cp {} output/ \;
+        ls -lh output/ || echo "No .ko files found"
+        cat rwProcMem33Module/rwProcMem_module/build.log 2>/dev/null || true
+        
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
       with:
-        name: r33-ko
-        path: o/*.ko
+        name: r33-oneplus-pad-pro-${{ github.event.inputs.kernel_version }}
+        path: output/*.ko
