@@ -27,20 +27,19 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y wget xz-utils make git bc bison flex libssl-dev
         
-    - name: Download Android GCC 4.9 Toolchain
+    - name: Download Android GCC 4.9 Toolchain (Google Official)
       run: |
-        echo "Downloading Android GCC 4.9 toolchain..."
-        wget -q https://github.com/Adrilaw/aarch64-linux-android-4.9-toolchain/archive/refs/heads/main.tar.gz
-        tar -xf main.tar.gz
-        mv aarch64-linux-android-4.9-toolchain-main android-toolchain
-        ls -la android-toolchain/bin/
+        echo "Downloading Android GCC 4.9 from Google..."
+        # 使用 Google 官方源
+        wget -q "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz" -O gcc-4.9.tar.gz
+        mkdir -p android-toolchain
+        tar -xf gcc-4.9.tar.gz -C android-toolchain
+        ls -la android-toolchain/bin/ || ls -la android-toolchain/
         
     - name: Clone OnePlus Kernel Source
       run: |
         echo "Cloning OnePlus SM8650 kernel..."
         git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git oneplus-kernel
-        cd oneplus-kernel
-        git branch -a | grep 6.1 || echo "Using default branch"
         
     - name: Configure Kernel
       run: |
@@ -59,10 +58,13 @@ jobs:
         export KDIR=$(pwd)/oneplus-kernel
         
         echo "Building with:"
-        echo "  ARCH=$ARCH"
-        echo "  CROSS_COMPILE=$CROSS_COMPILE"
-        echo "  KDIR=$KDIR"
-        which aarch64-linux-android-gcc
+        which aarch64-linux-android-gcc || echo "GCC not found, trying alternative..."
+        
+        # 如果找不到，直接使用完整路径
+        if [ ! -f "$(pwd)/android-toolchain/bin/aarch64-linux-android-gcc" ]; then
+          export CC=$(find $(pwd)/android-toolchain -name "aarch64-linux-android-gcc" | head -1)
+          export PATH=$(dirname $CC):$PATH
+        fi
         
         echo "Building rwProcMem33..."
         cd rwProcMem33Module/rwProcMem_module
@@ -83,7 +85,6 @@ jobs:
         mkdir -p output
         find . -name "*.ko" -type f -exec cp {} output/ \;
         ls -lh output/ || echo "No .ko files found"
-        cat rwProcMem33Module/rwProcMem_module/build.log 2>/dev/null || true
         
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
